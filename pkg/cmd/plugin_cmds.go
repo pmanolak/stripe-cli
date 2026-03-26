@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 
+	"github.com/stripe/stripe-cli/pkg/ansi"
 	"github.com/stripe/stripe-cli/pkg/config"
 	"github.com/stripe/stripe-cli/pkg/plugins"
 	"github.com/stripe/stripe-cli/pkg/validators"
@@ -106,12 +107,43 @@ func (ptc *pluginTemplateCmd) runPluginCmd(cmd *cobra.Command, args []string) er
 		return err
 	}
 
+	runDone := make(chan struct{})
+	updateCh := plugins.CheckAndUpdateInBackground(ctx, ptc.cfg, fs, &plugin, runDone)
+
 	log.WithFields(log.Fields{
 		"prefix": "cmd.pluginCmd.runPluginCmd",
 	}).Debug("Running plugin...")
 
 	err = plugin.Run(ctx, ptc.cfg, fs, ptc.ParsedArgs)
+	close(runDone)
+
+	select {
+	case result := <-updateCh:
+		// Update check (and any download) finished while the plugin was running.
+		if result.Version != "" {
+			if result.Err == nil {
+				fmt.Fprintln(os.Stderr, ansi.Faint(fmt.Sprintf("'%s' updated to v%s — this version will be used next time", plugin.Shortname, result.Version)))
+			} else {
+				fmt.Fprintln(os.Stderr, ansi.Faint(fmt.Sprintf("'%s' update to v%s failed", plugin.Shortname, result.Version)))
+			}
+		}
+	default:
+		// Still in progress — show a spinner until it finishes.
+		spinner := ansi.StartNewSpinner(ansi.Faint(fmt.Sprintf("checking for '%s' updates...", plugin.Shortname)), os.Stderr)
+		result := <-updateCh
+		if result.Version != "" {
+			if result.Err == nil {
+				ansi.StopSpinner(spinner, ansi.Faint(fmt.Sprintf("'%s' updated to v%s — this version will be used next time", plugin.Shortname, result.Version)), os.Stderr)
+			} else {
+				ansi.StopSpinner(spinner, ansi.Faint(fmt.Sprintf("'%s' update to v%s failed", plugin.Shortname, result.Version)), os.Stderr)
+			}
+		} else {
+			ansi.StopSpinner(spinner, "", os.Stderr)
+		}
+	}
+
 	plugins.CleanupAllClients()
+	plugins.WaitForBackgroundUpdates()
 
 	if err != nil {
 		if err == validators.ErrAPIKeyNotConfigured {

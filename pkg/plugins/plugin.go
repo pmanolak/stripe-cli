@@ -23,6 +23,7 @@ import (
 	"github.com/stripe/stripe-cli/pkg/requests"
 	"github.com/stripe/stripe-cli/pkg/stripe"
 
+	"github.com/briandowns/spinner"
 	hclog "github.com/hashicorp/go-hclog"
 	hcplugin "github.com/hashicorp/go-plugin"
 	log "github.com/sirupsen/logrus"
@@ -189,14 +190,26 @@ func (p *Plugin) getReleaseForVersion(version string) *Release {
 
 // Install installs the plugin of the given version
 func (p *Plugin) Install(ctx context.Context, cfg config.IConfig, fs afero.Fs, version string, baseURL string) error {
-	spinner := ansi.StartNewSpinner(ansi.Faint(fmt.Sprintf("installing '%s' v%s...", p.Shortname, version)), os.Stdout)
+	return p.install(ctx, cfg, fs, version, baseURL, true)
+}
+
+// install is the internal implementation of Install. When doCleanup is false the old
+// plugin versions are not removed and no spinner is shown, allowing the caller to
+// defer cleanup and surface its own progress UI.
+func (p *Plugin) install(ctx context.Context, cfg config.IConfig, fs afero.Fs, version string, baseURL string, doCleanup bool) error {
+	var sp *spinner.Spinner
+	if doCleanup {
+		sp = ansi.StartNewSpinner(ansi.Faint(fmt.Sprintf("installing '%s' v%s...", p.Shortname, version)), os.Stdout)
+	}
 
 	apiKey, _ := cfg.GetProfile().GetAPIKey(false)
 
 	pluginData, err := requests.GetPluginData(ctx, baseURL, stripe.APIVersion, apiKey, cfg.GetProfile())
 
 	if err != nil {
-		ansi.StopSpinner(spinner, ansi.Faint(fmt.Sprintf("could not install plugin '%s'", p.Shortname)), os.Stdout)
+		if doCleanup {
+			ansi.StopSpinner(sp, ansi.Faint(fmt.Sprintf("could not install plugin '%s'", p.Shortname)), os.Stdout)
+		}
 
 		log.WithFields(log.Fields{
 			"prefix": "plugins.plugin.Install",
@@ -209,11 +222,15 @@ func (p *Plugin) Install(ctx context.Context, cfg config.IConfig, fs afero.Fs, v
 	release := p.getReleaseForVersion(version)
 	if release != nil {
 		if nodeVersion, requiresNode := GetRuntimeRequirement(*release); requiresNode {
-			ansi.StopSpinner(spinner, "", os.Stdout)
+			if doCleanup {
+				ansi.StopSpinner(sp, "", os.Stdout)
+			}
 			if err := InstallNodeRuntime(ctx, cfg, fs, nodeVersion); err != nil {
 				return fmt.Errorf("failed to install required Node.js runtime: %w", err)
 			}
-			spinner = ansi.StartNewSpinner(ansi.Faint(fmt.Sprintf("installing '%s' v%s...", p.Shortname, version)), os.Stdout)
+			if doCleanup {
+				sp = ansi.StartNewSpinner(ansi.Faint(fmt.Sprintf("installing '%s' v%s...", p.Shortname, version)), os.Stdout)
+			}
 		}
 	}
 
@@ -223,7 +240,9 @@ func (p *Plugin) Install(ctx context.Context, cfg config.IConfig, fs afero.Fs, v
 	err = p.downloadAndSavePlugin(cfg, pluginDownloadURL, fs, version)
 
 	if err != nil {
-		ansi.StopSpinner(spinner, ansi.Faint(fmt.Sprintf("could not install plugin '%s': %s", p.Shortname, err)), os.Stdout)
+		if doCleanup {
+			ansi.StopSpinner(sp, ansi.Faint(fmt.Sprintf("could not install plugin '%s': %s", p.Shortname, err)), os.Stdout)
+		}
 		return err
 	}
 
@@ -244,10 +263,11 @@ func (p *Plugin) Install(ctx context.Context, cfg config.IConfig, fs afero.Fs, v
 	// sync list of installed plugins to file
 	cfg.WriteConfigField("installed_plugins", installedList)
 
-	// Once the plugin is successfully downloaded, clean up other versions
-	p.cleanUpPluginPath(cfg, fs, version)
-
-	ansi.StopSpinner(spinner, "", os.Stdout)
+	if doCleanup {
+		// Once the plugin is successfully downloaded, clean up other versions
+		p.cleanUpPluginPath(cfg, fs, version)
+		ansi.StopSpinner(sp, "", os.Stdout)
+	}
 
 	return nil
 }
