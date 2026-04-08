@@ -5,6 +5,8 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/stripe/stripe-cli/pkg/config"
 )
 
 func TestUpdatesEnabled(t *testing.T) {
@@ -68,10 +70,10 @@ func TestUpdatesEnabled(t *testing.T) {
 			}
 
 			if tt.pluginVal != "" {
-				viper.Set("plugin_configs."+pluginName+".updates", tt.pluginVal)
+				viper.Set(config.PluginConfigKey(pluginName, config.PluginConfigUpdatesField), tt.pluginVal)
 			}
 			if tt.globalVal != "" {
-				viper.Set("plugin_configs.__global.updates", tt.globalVal)
+				viper.Set(config.PluginConfigKey(config.PluginConfigGlobalScope, config.PluginConfigUpdatesField), tt.globalVal)
 			}
 
 			assert.Equal(t, tt.want, updatesEnabled(pluginName))

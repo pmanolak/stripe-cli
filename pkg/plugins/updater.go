@@ -34,12 +34,12 @@ func WaitForBackgroundUpdates() {
 // The default when neither is set is false (updates off).
 func updatesEnabled(pluginName string) bool {
 	logger := log.WithFields(log.Fields{"prefix": "plugins.updater"})
-	pluginVal := viper.GetString(PluginConfigKey(pluginName, PluginConfigUpdatesField))
+	pluginVal := viper.GetString(config.PluginConfigKey(pluginName, config.PluginConfigUpdatesField))
 	if pluginVal != "" {
 		logger.Debugf("Automatic updates for plugin '%s' enabled: %t", pluginName, pluginVal == "on")
 		return pluginVal == "on"
 	}
-	globalVal := viper.GetString(PluginConfigKey(PluginConfigGlobalScope, PluginConfigUpdatesField))
+	globalVal := viper.GetString(config.PluginConfigKey(config.PluginConfigGlobalScope, config.PluginConfigUpdatesField))
 	logger.Debugf("Automatic updates for plugins globally enabled: %t", globalVal == "on")
 	return globalVal == "on"
 }
